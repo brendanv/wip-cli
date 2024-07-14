@@ -3,17 +3,25 @@ import json
 import os
 import subprocess
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
 class WIPNode:
-    def __init__(self, name: str, notes: Optional[str] = None):
+
+    def __init__(self,
+                 name: str,
+                 notes: Optional[str] = None,
+                 created_time: Optional[str] = None):
         self.name: str = name
         self.notes: Optional[str] = notes
+        self.created_time: str = created_time or datetime.now().isoformat()
         self.children: List['WIPNode'] = []
 
+
 class WIPTracker:
+
     def __init__(self):
         self.root: WIPNode = WIPNode("Root")
         self.current: WIPNode = self.root
@@ -23,10 +31,12 @@ class WIPTracker:
         self.load_state()
 
     def save_state(self) -> None:
+
         def serialize_node(node: WIPNode) -> Dict[str, Any]:
             return {
                 "name": node.name,
                 "notes": node.notes,
+                "created_time": node.created_time,
                 "children": [serialize_node(child) for child in node.children]
             }
 
@@ -47,8 +57,10 @@ class WIPTracker:
             state: Dict[str, Any] = json.load(f)
 
         def deserialize_node(data: Dict[str, Any]) -> WIPNode:
-            node = WIPNode(data["name"], data["notes"])
-            node.children = [deserialize_node(child) for child in data["children"]]
+            node = WIPNode(data["name"], data["notes"], data["created_time"])
+            node.children = [
+                deserialize_node(child) for child in data["children"]
+            ]
             return node
 
         self.root = deserialize_node(state["root"])
@@ -56,11 +68,14 @@ class WIPTracker:
         self.archived_nodes = state.get("archived_nodes", [])
         self.current = self.root
         for name in self.current_path:
-            child = next((c for c in self.current.children if c.name == name), None)
+            child = next((c for c in self.current.children if c.name == name),
+                         None)
             if child:
                 self.current = child
             else:
-                print(f"Warning: Could not find node {name} in path. Resetting to last valid node.")
+                print(
+                    f"Warning: Could not find node {name} in path. Resetting to last valid node."
+                )
                 break
 
     def push(self, name: str, notes: Optional[str] = None) -> None:
@@ -80,7 +95,9 @@ class WIPTracker:
             archived_node = {
                 "name": self.current.name,
                 "notes": self.current.notes,
-                "path": self.get_path()
+                "path": self.get_path(),
+                "created_time": self.current.created_time,
+                "archived_time": datetime.now().isoformat()
             }
             self.archived_nodes.append(archived_node)
             self.current = parent
@@ -100,14 +117,17 @@ class WIPTracker:
         return None
 
     def current_info(self) -> str:
-        return f"Current WIP: {self.current.name}\nPath: {self.get_path()}\nNotes: {self.current.notes or 'None'}"
+        return f"Current WIP: {self.current.name}\nPath: {self.get_path()}\nNotes: {self.current.notes or 'None'}\nCreated time: {self.current.created_time}"
 
     def edit_note(self, new_note: Optional[str] = None) -> None:
         if new_note is not None:
             self.current.notes = new_note
         else:
-            editor = os.environ.get('EDITOR', 'vi')  # Default to vi if EDITOR is not set
-            with tempfile.NamedTemporaryFile(mode='w+', suffix=".txt", delete=False) as temp_file:
+            editor = os.environ.get('EDITOR',
+                                    'vi')  # Default to vi if EDITOR is not set
+            with tempfile.NamedTemporaryFile(mode='w+',
+                                             suffix=".txt",
+                                             delete=False) as temp_file:
                 if self.current.notes:
                     temp_file.write(self.current.notes)
                 temp_file.flush()
@@ -124,7 +144,8 @@ class WIPTracker:
         self.current_path.pop()
         self.current = self.root
         for name in self.current_path:
-            self.current = next(c for c in self.current.children if c.name == name)
+            self.current = next(c for c in self.current.children
+                                if c.name == name)
         self.save_state()
         return self.current_info()
 
@@ -159,23 +180,36 @@ class WIPTracker:
             return "/"
         return "/" + "/".join(self.current_path)
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="WIP Tracker CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    push_parser = subparsers.add_parser("push", help="Create a new WIP as a child of the current WIP")
+    push_parser = subparsers.add_parser(
+        "push", help="Create a new WIP as a child of the current WIP")
     push_parser.add_argument("name", help="Name of the new WIP")
     push_parser.add_argument("--notes", help="Optional notes for the new WIP")
 
-    subparsers.add_parser("current", help="Display the name, path, and notes for the current WIP")
-    subparsers.add_parser("pop", help="Delete the current WIP and set the parent WIP to be current")
+    subparsers.add_parser(
+        "current",
+        help="Display the name, path, and notes for the current WIP")
+    subparsers.add_parser(
+        "pop",
+        help="Delete the current WIP and set the parent WIP to be current")
 
-    note_parser = subparsers.add_parser("note", help="Edit the note for the current WIP")
-    note_parser.add_argument("note", nargs='?', help="New note content (optional)")
+    note_parser = subparsers.add_parser(
+        "note", help="Edit the note for the current WIP")
+    note_parser.add_argument("note",
+                             nargs='?',
+                             help="New note content (optional)")
 
-    subparsers.add_parser("up", help="Set current to the parent node and display the new current node")
-    subparsers.add_parser("down", help="List children and select which child to set as current")
-    subparsers.add_parser("path", help="Print the full path to the current WIP")
+    subparsers.add_parser(
+        "up",
+        help="Set current to the parent node and display the new current node")
+    subparsers.add_parser(
+        "down", help="List children and select which child to set as current")
+    subparsers.add_parser("path",
+                          help="Print the full path to the current WIP")
 
     args: argparse.Namespace = parser.parse_args()
 
@@ -197,6 +231,7 @@ def main() -> None:
         print(tracker.down())
     elif args.command == "path":
         print(tracker.get_path())
+
 
 if __name__ == "__main__":
     main()
