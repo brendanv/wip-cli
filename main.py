@@ -26,8 +26,8 @@ class WIPTracker:
         self.root: WIPNode = WIPNode("Root")
         self.current: WIPNode = self.root
         self.current_path: List[str] = []
-        self.archived_nodes: List[Dict[str, Any]] = []
         self.state_file = Path.home() / ".wip" / "state.json"
+        self.archive_file = Path.home() / ".wip" / "archive.json"
         self.load_state()
 
     def save_state(self) -> None:
@@ -42,8 +42,7 @@ class WIPTracker:
 
         state: Dict[str, Any] = {
             "root": serialize_node(self.root),
-            "current_path": self.current_path,
-            "archived_nodes": self.archived_nodes
+            "current_path": self.current_path
         }
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
         with open(self.state_file, "w") as f:
@@ -65,7 +64,6 @@ class WIPTracker:
 
         self.root = deserialize_node(state["root"])
         self.current_path = state["current_path"]
-        self.archived_nodes = state.get("archived_nodes", [])
         self.current = self.root
         for name in self.current_path:
             child = next((c for c in self.current.children if c.name == name),
@@ -78,6 +76,30 @@ class WIPTracker:
                 )
                 break
 
+    def archive_node(self, node: WIPNode, path: List[str]) -> None:
+        if self.archive_file.exists():
+            with open(self.archive_file, "r") as f:
+                archived_nodes = json.load(f)
+        else:
+            archived_nodes = []
+
+        def archive_node_recursive(node: WIPNode, path: List[str]):
+            for child in node.children:
+                archive_node_recursive(child, path + [child.name])
+            archived_node = {
+                "name": node.name,
+                "notes": node.notes,
+                "path": "/" + "/".join(path),
+                "created_time": node.created_time,
+                "archived_time": datetime.now().isoformat()
+            }
+            archived_nodes.append(archived_node)
+
+        archive_node_recursive(node, path)
+
+        with open(self.archive_file, "w") as f:
+            json.dump(archived_nodes, f, indent=2)
+
     def push(self, name: str, notes: Optional[str] = None) -> None:
         new_node = WIPNode(name, notes)
         self.current.children.append(new_node)
@@ -89,22 +111,10 @@ class WIPTracker:
         if self.current == self.root:
             return "Cannot delete root node"
 
-        def archive_node(node: WIPNode, path: List[str]) -> None:
-            for child in node.children:
-                archive_node(child, path + [child.name])
-            archived_node = {
-                "name": node.name,
-                "notes": node.notes,
-                "path": "/" + "/".join(path),
-                "created_time": node.created_time,
-                "archived_time": datetime.now().isoformat()
-            }
-            self.archived_nodes.append(archived_node)
-
         parent = self.find_parent(self.root, self.current)
         if parent:
             # Archive the current node along with all of its children
-            archive_node(self.current, self.current_path)
+            self.archive_node(self.current, self.current_path)
             parent.children.remove(self.current)
             self.current = parent
             self.current_path.pop()
