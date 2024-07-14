@@ -7,6 +7,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from prompt_toolkit import prompt
+from prompt_toolkit.completion import FuzzyWordCompleter
+
 
 class WIPNode:
 
@@ -196,6 +199,46 @@ class WIPTracker:
             return "/"
         return "/" + "/".join(self.current_path)
 
+    def switch(self) -> str:
+        all_paths = ["root"] + self.get_all_paths()
+        path_completer = FuzzyWordCompleter(all_paths)
+
+        selected_path = prompt("Switch to: ", completer=path_completer)
+
+        if not selected_path:
+            return "No path selected"
+
+        if selected_path.lower() == "root":
+            self.current = self.root
+            self.current_path = []
+        else:
+            path_components = selected_path.strip("/").split("/")
+
+            self.current = self.root
+            self.current_path = []
+
+            for component in path_components:
+                child = next((c for c in self.current.children if c.name == component), None)
+                if child:
+                    self.current = child
+                    self.current_path.append(component)
+                else:
+                    return f"Error: Could not find node {component} in path"
+
+        self.save_state()
+        return f"Switched to: {self.current_info()}"
+
+    def get_all_paths(self) -> List[str]:
+        paths = []
+
+        def traverse(node: WIPNode, current_path: List[str]):
+            if node != self.root:
+                paths.append("/" + "/".join(current_path))
+            for child in node.children:
+                traverse(child, current_path + [child.name])
+
+        traverse(self.root, [])
+        return paths
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="WIP Tracker CLI")
@@ -226,6 +269,8 @@ def main() -> None:
         "down", help="List children and select which child to set as current")
     subparsers.add_parser("path",
                           help="Print the full path to the current WIP")
+    subparsers.add_parser(
+        "switch", help="Interactively switch to a WIP based on path")
 
     args: argparse.Namespace = parser.parse_args()
 
@@ -247,6 +292,8 @@ def main() -> None:
         print(tracker.down())
     elif args.command == "path":
         print(tracker.get_path())
+    elif args.command == "switch":
+        print(tracker.switch())
 
 
 if __name__ == "__main__":
