@@ -1,0 +1,10 @@
+#!/bin/bash
+
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+VENV_DIR="$DIR/venv"
+PYTHON_SCRIPT="$DIR/main.py"
+
+source $VENV_DIR/bin/activate
+python $PYTHON_SCRIPT "$@"
+deactivate
