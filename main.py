@@ -193,6 +193,10 @@ class WIPTracker:
                         print("Invalid choice. Please try again.")
                 except ValueError:
                     print("Invalid input. Please enter a number.")
+                except KeyboardInterrupt:
+                    return "\n...cancelled"
+                except EOFError:
+                    return "\n...cancelled"
 
     def get_path(self) -> str:
         if not self.current_path:
@@ -203,7 +207,12 @@ class WIPTracker:
         all_paths = ["root"] + self.get_all_paths()
         path_completer = FuzzyWordCompleter(all_paths)
 
-        selected_path = prompt("Switch to: ", completer=path_completer)
+        try: 
+            selected_path = prompt("Switch to: ", completer=path_completer)
+        except KeyboardInterrupt:
+            return "...cancelled"
+        except EOFError:
+            return "...cancelled"
 
         if not selected_path:
             return "No path selected"
