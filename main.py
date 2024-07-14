@@ -133,7 +133,7 @@ class WIPTracker:
         return None
 
     def current_info(self) -> str:
-        return f"Current WIP: {self.current.name}\nPath: {self.get_path()}\nNotes: {self.current.notes or 'None'}\nCreated time: {self.current.created_time}"
+        return f"Current WIP: {self.current.name}\nPath: {self.get_path()}\nNotes: {self.current.notes or 'None'}"
 
     def edit_note(self, new_note: Optional[str] = None) -> None:
         if new_note is not None:
