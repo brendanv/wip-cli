@@ -29,8 +29,8 @@ class WIPTracker:
         self.root: WIPNode = WIPNode("Root")
         self.current: WIPNode = self.root
         self.current_path: List[str] = []
-        self.state_file = Path.home() / ".wip" / "state.json"
-        self.archive_file = Path.home() / ".wip" / "archive.json"
+        self.state_file = Path(__file__).parent / "state.json"
+        self.archive_file = Path(__file__).parent / "archive.json"
         self.load_state()
 
     def save_state(self) -> None:
