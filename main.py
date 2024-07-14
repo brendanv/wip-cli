@@ -89,17 +89,23 @@ class WIPTracker:
         if self.current == self.root:
             return "Cannot delete root node"
 
-        parent = self.find_parent(self.root, self.current)
-        if parent:
-            parent.children.remove(self.current)
+        def archive_node(node: WIPNode, path: List[str]) -> None:
+            for child in node.children:
+                archive_node(child, path + [child.name])
             archived_node = {
-                "name": self.current.name,
-                "notes": self.current.notes,
-                "path": self.get_path(),
-                "created_time": self.current.created_time,
+                "name": node.name,
+                "notes": node.notes,
+                "path": "/" + "/".join(path),
+                "created_time": node.created_time,
                 "archived_time": datetime.now().isoformat()
             }
             self.archived_nodes.append(archived_node)
+
+        parent = self.find_parent(self.root, self.current)
+        if parent:
+            # Archive the current node along with all of its children
+            archive_node(self.current, self.current_path)
+            parent.children.remove(self.current)
             self.current = parent
             self.current_path.pop()
             self.save_state()
