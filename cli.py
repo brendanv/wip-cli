@@ -142,17 +142,16 @@ class WIPTracker:
         if new_note is not None:
             self.current.notes = f"{self.current.notes}\n{new_note}"
         else:
-            editor = os.environ.get('EDITOR',
-                                    'vi')  # Default to vi if EDITOR is not set
+            editor = os.environ.get('EDITOR', 'vi')
             with tempfile.NamedTemporaryFile(mode='w+',
                                              suffix=".txt",
                                              delete=False) as temp_file:
                 if self.current.notes:
                     temp_file.write(self.current.notes)
-                temp_file.flush()
+                temp_file.close()
                 subprocess.call([editor, temp_file.name])
-                temp_file.seek(0)
-                self.current.notes = temp_file.read().strip()
+                with open(temp_file.name, 'r') as updated_file:
+                    self.current.notes = updated_file.read().strip()
             os.unlink(temp_file.name)
         self.save_state()
 
@@ -207,7 +206,7 @@ class WIPTracker:
         all_paths = ["root"] + self.get_all_paths()
         path_completer = FuzzyWordCompleter(all_paths)
 
-        try: 
+        try:
             selected_path = prompt("Switch to: ", completer=path_completer)
         except KeyboardInterrupt:
             return "...cancelled"
@@ -227,7 +226,9 @@ class WIPTracker:
             self.current_path = []
 
             for component in path_components:
-                child = next((c for c in self.current.children if c.name == component), None)
+                child = next(
+                    (c for c in self.current.children if c.name == component),
+                    None)
                 if child:
                     self.current = child
                     self.current_path.append(component)
@@ -248,6 +249,7 @@ class WIPTracker:
 
         traverse(self.root, [])
         return paths
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="wip-cli")
@@ -278,8 +280,8 @@ def main() -> None:
         "down", help="List children and select which child to set as current")
     subparsers.add_parser("path",
                           help="Print the full path to the current WIP")
-    subparsers.add_parser(
-        "switch", help="Interactively switch to a WIP based on path")
+    subparsers.add_parser("switch",
+                          help="Interactively switch to a WIP based on path")
 
     args: argparse.Namespace = parser.parse_args()
 
