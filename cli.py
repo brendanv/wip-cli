@@ -250,7 +250,7 @@ class WIPTracker:
         return paths
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="WIP Tracker CLI")
+    parser = argparse.ArgumentParser(description="wip-cli")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     push_parser = subparsers.add_parser(
