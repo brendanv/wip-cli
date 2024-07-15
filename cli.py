@@ -140,7 +140,7 @@ class WIPTracker:
 
     def edit_note(self, new_note: Optional[str] = None) -> None:
         if new_note is not None:
-            self.current.notes = new_note
+            self.current.notes = f"{self.current.notes}\n{new_note}"
         else:
             editor = os.environ.get('EDITOR',
                                     'vi')  # Default to vi if EDITOR is not set
