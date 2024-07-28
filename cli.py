@@ -1,192 +1,153 @@
 import argparse
-import json
 import os
+import sqlite3
 import subprocess
 import tempfile
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import List, Optional, Tuple
 
 from prompt_toolkit import prompt
 from prompt_toolkit.completion import FuzzyWordCompleter
 
 
-class WIPNode:
-
-    def __init__(self,
-                 name: str,
-                 notes: Optional[str] = None,
-                 created_time: Optional[str] = None):
-        self.name: str = name
-        self.notes: Optional[str] = notes
-        self.created_time: str = created_time or datetime.now().isoformat()
-        self.children: List['WIPNode'] = []
-
-
 class WIPTracker:
 
     def __init__(self):
-        self.root: WIPNode = WIPNode("Root")
-        self.current: WIPNode = self.root
-        self.current_path: List[str] = []
-        self.state_file = Path(__file__).parent / "state.json"
-        self.archive_file = Path(__file__).parent / "archive.json"
-        self.load_state()
+        self.db_file = Path(__file__).parent / "wip.db"
+        self.conn = sqlite3.connect(str(self.db_file))
+        self.cursor = self.conn.cursor()
+        self.create_table()
+        self.ensure_root_node()
 
-    def save_state(self) -> None:
+    def create_table(self):
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS wip (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                parent INTEGER,
+                path TEXT NOT NULL,
+                name TEXT NOT NULL,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                archived_at TIMESTAMP,
+                current BOOLEAN DEFAULT 0,
+                FOREIGN KEY (parent) REFERENCES wip (id)
+            )
+        ''')
+        self.conn.commit()
 
-        def serialize_node(node: WIPNode) -> Dict[str, Any]:
-            return {
-                "name": node.name,
-                "notes": node.notes,
-                "created_time": node.created_time,
-                "children": [serialize_node(child) for child in node.children]
-            }
+    def ensure_root_node(self):
+        self.cursor.execute("SELECT id FROM wip WHERE parent IS NULL")
+        if not self.cursor.fetchone():
+            self.cursor.execute(
+                "INSERT INTO wip (path, name, current) VALUES ('/', 'Root', 1)"
+            )
+            self.conn.commit()
 
-        state: Dict[str, Any] = {
-            "root": serialize_node(self.root),
-            "current_path": self.current_path
-        }
-        self.state_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.state_file, "w") as f:
-            json.dump(state, f, indent=2)
+    def get_current_node(self) -> Tuple[int, str, str, Optional[str]]:
+        self.cursor.execute(
+            "SELECT id, path, name, notes FROM wip WHERE current = 1")
+        return self.cursor.fetchone()
 
-    def load_state(self) -> None:
-        if not self.state_file.exists():
-            return
-
-        with open(self.state_file, "r") as f:
-            state: Dict[str, Any] = json.load(f)
-
-        def deserialize_node(data: Dict[str, Any]) -> WIPNode:
-            node = WIPNode(data["name"], data["notes"], data["created_time"])
-            node.children = [
-                deserialize_node(child) for child in data["children"]
-            ]
-            return node
-
-        self.root = deserialize_node(state["root"])
-        self.current_path = state["current_path"]
-        self.current = self.root
-        for name in self.current_path:
-            child = next((c for c in self.current.children if c.name == name),
-                         None)
-            if child:
-                self.current = child
-            else:
-                print(
-                    f"Warning: Could not find node {name} in path. Resetting to last valid node."
-                )
-                break
-
-    def archive_node(self, node: WIPNode, path: List[str]) -> None:
-        if self.archive_file.exists():
-            with open(self.archive_file, "r") as f:
-                archived_nodes = json.load(f)
-        else:
-            archived_nodes = []
-
-        def archive_node_recursive(node: WIPNode, path: List[str]):
-            for child in node.children:
-                archive_node_recursive(child, path + [child.name])
-            archived_node = {
-                "name": node.name,
-                "notes": node.notes,
-                "path": "/" + "/".join(path),
-                "created_time": node.created_time,
-                "archived_time": datetime.now().isoformat()
-            }
-            archived_nodes.append(archived_node)
-
-        archive_node_recursive(node, path)
-
-        with open(self.archive_file, "w") as f:
-            json.dump(archived_nodes, f, indent=2)
+    def set_current_node(self, node_id: int):
+        self.cursor.execute("UPDATE wip SET current = 0")
+        self.cursor.execute("UPDATE wip SET current = 1 WHERE id = ?",
+                            (node_id, ))
+        self.conn.commit()
 
     def push(self, name: str, notes: Optional[str] = None) -> None:
-        new_node = WIPNode(name, notes)
-        self.current.children.append(new_node)
-        self.current = new_node
-        self.current_path.append(name)
-        self.save_state()
+        current_id, current_path, _, _ = self.get_current_node()
+        new_path = os.path.join(current_path, name).replace('\\', '/')
+        self.cursor.execute(
+            "INSERT INTO wip (parent, path, name, notes) VALUES (?, ?, ?, ?)",
+            (current_id, new_path, name, notes))
+        new_id = self.cursor.lastrowid
+        self.set_current_node(new_id)
+        self.conn.commit()
 
     def pop(self) -> str:
-        if self.current == self.root:
+        current_id, current_path, current_name, _ = self.get_current_node()
+        if current_path == '/':
             return "Cannot delete root node"
 
-        parent = self.find_parent(self.root, self.current)
-        if parent:
-            # Archive the current node along with all of its children
-            self.archive_node(self.current, self.current_path)
-            parent.children.remove(self.current)
-            self.current = parent
-            self.current_path.pop()
-            self.save_state()
-            return f"Deleted node and moved to parent: {self.current_info()}"
-        else:
-            return "Error: Parent node not found"
+        self.cursor.execute("SELECT parent FROM wip WHERE id = ?",
+                            (current_id, ))
+        parent_id = self.cursor.fetchone()[0]
 
-    def find_parent(self, node: WIPNode, target: WIPNode) -> Optional[WIPNode]:
-        for child in node.children:
-            if child == target:
-                return node
-            result = self.find_parent(child, target)
-            if result:
-                return result
-        return None
+        # Archive the current node
+        self.cursor.execute(
+            "UPDATE wip SET archived_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (current_id, ))
+
+        self.set_current_node(parent_id)
+        self.conn.commit()
+
+        self.cursor.execute("SELECT path, name FROM wip WHERE id = ?",
+                            (parent_id, ))
+        parent_path, parent_name = self.cursor.fetchone()
+        return f"Deleted node and moved to parent: {parent_path} ({parent_name})"
 
     def current_info(self) -> str:
-        return f"Current WIP: {self.current.name}\nPath: {self.get_path()}\nNotes: {self.current.notes or 'None'}"
+        _, path, name, notes = self.get_current_node()
+        return f"Current WIP: {name}\nPath: {path}\nNotes: {notes or 'None'}"
 
     def edit_note(self, new_note: Optional[str] = None) -> None:
+        current_id, _, _, current_notes = self.get_current_node()
         if new_note is not None:
-            self.current.notes = f"{self.current.notes}\n{new_note}"
+            updated_notes = f"{current_notes or ''}\n{new_note}".strip()
         else:
             editor = os.environ.get('EDITOR', 'vi')
             with tempfile.NamedTemporaryFile(mode='w+',
                                              suffix=".txt",
                                              delete=False) as temp_file:
-                if self.current.notes:
-                    temp_file.write(self.current.notes)
+                if current_notes:
+                    temp_file.write(current_notes)
                 temp_file.close()
                 subprocess.call([editor, temp_file.name])
                 with open(temp_file.name, 'r') as updated_file:
-                    self.current.notes = updated_file.read().strip()
+                    updated_notes = updated_file.read().strip()
             os.unlink(temp_file.name)
-        self.save_state()
+
+        self.cursor.execute("UPDATE wip SET notes = ? WHERE id = ?",
+                            (updated_notes, current_id))
+        self.conn.commit()
 
     def up(self) -> str:
-        if not self.current_path:
+        current_id, current_path, _, _ = self.get_current_node()
+        if current_path == '/':
             return "Already at root node"
 
-        self.current_path.pop()
-        self.current = self.root
-        for name in self.current_path:
-            self.current = next(c for c in self.current.children
-                                if c.name == name)
-        self.save_state()
+        self.cursor.execute("SELECT parent FROM wip WHERE id = ?",
+                            (current_id, ))
+        parent_id = self.cursor.fetchone()[0]
+        self.set_current_node(parent_id)
         return self.current_info()
 
     def down(self) -> str:
-        if not self.current.children:
+        current_id, _, _, _ = self.get_current_node()
+        self.cursor.execute(
+            """
+            SELECT id, name 
+            FROM wip 
+            WHERE parent = ? AND archived_at IS NULL
+            ORDER BY name
+        """, (current_id, ))
+        children = self.cursor.fetchall()
+
+        if not children:
             return "No children nodes"
-        elif len(self.current.children) == 1:
-            self.current = self.current.children[0]
-            self.current_path.append(self.current.name)
-            self.save_state()
+        elif len(children) == 1:
+            self.set_current_node(children[0][0])
             return self.current_info()
         else:
             print("Select a child node:")
-            for i, child in enumerate(self.current.children, 1):
-                print(f"{i}. {child.name}")
+            for i, (_, child_name) in enumerate(children, 1):
+                print(f"{i}. {child_name}")
 
             while True:
                 try:
                     choice = int(input("Enter the number of your choice: "))
-                    if 1 <= choice <= len(self.current.children):
-                        self.current = self.current.children[choice - 1]
-                        self.current_path.append(self.current.name)
-                        self.save_state()
+                    if 1 <= choice <= len(children):
+                        self.set_current_node(children[choice - 1][0])
                         return self.current_info()
                     else:
                         print("Invalid choice. Please try again.")
@@ -197,13 +158,12 @@ class WIPTracker:
                 except EOFError:
                     return "\n...cancelled"
 
-    def get_path(self) -> str:
-        if not self.current_path:
-            return "/"
-        return "/" + "/".join(self.current_path)
+    def get_all_paths(self) -> List[str]:
+        self.cursor.execute("SELECT path FROM wip WHERE archived_at IS NULL")
+        return [row[0] for row in self.cursor.fetchall()]
 
     def switch(self) -> str:
-        all_paths = ["root"] + self.get_all_paths()
+        all_paths = self.get_all_paths()
         path_completer = FuzzyWordCompleter(all_paths)
 
         try:
@@ -216,39 +176,18 @@ class WIPTracker:
         if not selected_path:
             return "No path selected"
 
-        if selected_path.lower() == "root":
-            self.current = self.root
-            self.current_path = []
+        self.cursor.execute("SELECT id FROM wip WHERE path = ?",
+                            (selected_path, ))
+        result = self.cursor.fetchone()
+        if result:
+            self.set_current_node(result[0])
+            return f"Switched to: {self.current_info()}"
         else:
-            path_components = selected_path.strip("/").split("/")
+            return f"Error: Could not find node with path {selected_path}"
 
-            self.current = self.root
-            self.current_path = []
-
-            for component in path_components:
-                child = next(
-                    (c for c in self.current.children if c.name == component),
-                    None)
-                if child:
-                    self.current = child
-                    self.current_path.append(component)
-                else:
-                    return f"Error: Could not find node {component} in path"
-
-        self.save_state()
-        return f"Switched to: {self.current_info()}"
-
-    def get_all_paths(self) -> List[str]:
-        paths = []
-
-        def traverse(node: WIPNode, current_path: List[str]):
-            if node != self.root:
-                paths.append("/" + "/".join(current_path))
-            for child in node.children:
-                traverse(child, current_path + [child.name])
-
-        traverse(self.root, [])
-        return paths
+    def __del__(self):
+        if hasattr(self, 'conn'):
+            self.conn.close()
 
 
 def main() -> None:
@@ -302,7 +241,7 @@ def main() -> None:
     elif args.command == "down":
         print(tracker.down())
     elif args.command == "path":
-        print(tracker.get_path())
+        print(tracker.get_current_node()[1])
     elif args.command == "switch":
         print(tracker.switch())
 
